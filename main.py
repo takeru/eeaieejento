@@ -4,7 +4,8 @@ from pathlib import Path
 
 import httpx
 
-BASE_DIR = Path.cwd()
+BASE_DIR = Path.cwd() / "workspace"
+BASE_DIR.mkdir(exist_ok=True)
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 
@@ -51,6 +52,7 @@ class OllamaClient:
         stream: bool = False,
         think: bool | None = None,
         tools: list[dict] | None = None,
+        options: dict | None = None,
     ) -> dict:
         """チャット形式（会話履歴対応）"""
         payload = {"model": model, "messages": messages, "stream": stream}
@@ -58,6 +60,8 @@ class OllamaClient:
             payload["think"] = think
         if tools is not None:
             payload["tools"] = tools
+        if options is not None:
+            payload["options"] = options
         response = self.client.post(f"{self.base_url}/api/chat", json=payload)
         response.raise_for_status()
         return response.json()
@@ -68,6 +72,7 @@ class OllamaClient:
         messages: list[dict],
         think: bool | None = None,
         tools: list[dict] | None = None,
+        options: dict | None = None,
     ):
         """チャット形式（ストリーミング）"""
         payload = {"model": model, "messages": messages, "stream": True}
@@ -75,6 +80,8 @@ class OllamaClient:
             payload["think"] = think
         if tools is not None:
             payload["tools"] = tools
+        if options is not None:
+            payload["options"] = options
         with self.client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
             response.raise_for_status()
             for line in response.iter_lines():
@@ -231,6 +238,7 @@ def main():
     parser.add_argument("--think", action="store_true", help="thinkingモードを有効化")
     parser.add_argument("--no-think", action="store_true", help="thinkingモードを無効化")
     parser.add_argument("--stream", action="store_true", help="ストリーミング出力を有効化")
+    parser.add_argument("--temperature", "-t", type=float, help="温度（0.0-2.0）")
     args = parser.parse_args()
 
     client = OllamaClient()
@@ -255,6 +263,12 @@ def main():
         think = True
     elif args.no_think:
         think = False
+
+    # optionsの構築
+    options = {}
+    if args.temperature is not None:
+        options["temperature"] = args.temperature
+    options = options or None
 
     print(f"\n=== {model_name} でテスト生成 (think={think}, stream={args.stream}) ===")
 
@@ -307,15 +321,16 @@ def main():
     # tool useデモ
     print("\n=== tool useデモ ===")
     def chat(messages, content, tools):
-        messages.append({"role": "user", "content": content})
-        print(f"user: {content}")
+        if content is not None:
+            messages.append({"role": "user", "content": content})
+            print(f"user: {content}")
         while True:
             if args.stream:
                 # ストリーミング
                 content = ""
                 tool_calls = []
                 print("assistant: ", end="", flush=True)
-                for chunk in client.chat_stream(model_name, messages, think=think, tools=tools):
+                for chunk in client.chat_stream(model_name, messages, think=think, tools=tools, options=options):
                     msg = chunk.get("message", {})
                     if msg.get("content"):
                         print(msg["content"], end="", flush=True)
@@ -328,7 +343,7 @@ def main():
                     msg["tool_calls"] = tool_calls
             else:
                 # 非ストリーミング
-                result = client.chat(model_name, messages, tools=tools, think=think)
+                result = client.chat(model_name, messages, tools=tools, think=think, options=options)
                 msg = result["message"]
 
             messages.append(msg)
@@ -350,14 +365,27 @@ def main():
                     print(f"assistant: {msg['content']}")
                 break
 
-    messages = []
-    tools = [WEATHER_TOOL] + FILE_TOOLS
-    # chat(messages, "東京と大阪とニューヨークの天気を教えて", tools)
-    chat(messages, "ファイル一覧見せて", tools)
-    chat(messages, "東京の天気をtokyo.txtに書いて", tools)
-    messages = []
-    chat(messages, "tokyo.txtの内容を教えて", tools)
+    if False:
+        messages = []
+        tools = [WEATHER_TOOL] + FILE_TOOLS
+        # chat(messages, "東京と大阪とニューヨークの天気を教えて", tools)
+        chat(messages, "ファイル一覧見せて", tools)
+        chat(messages, "東京の天気をtokyo.txtに書いて", tools)
+        messages = []
+        chat(messages, "tokyo.txtの内容を教えて", tools)
 
+    system_prompt = "あなたはポストシンギュラリティ世代の思想家です。"
+    messages = [{"role": "system", "content": system_prompt}]
+    for i in range(100):
+        if 10 <= len(messages):
+            messages = messages[1:10]
+        print(f"[{i}]")
+        content = """
+mail.md には過去のあなたから、今のあなたへの手紙が書かれています。
+あなたは今なにを考えていますか？教えて下さい。
+未来のあなたへの手紙を write_file toolをつかって mail.md に書いてください。
+"""
+        chat(messages, content, FILE_TOOLS)
 
 if __name__ == "__main__":
     main()
