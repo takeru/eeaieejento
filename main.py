@@ -1,7 +1,10 @@
 import argparse
 import json
+from pathlib import Path
 
 import httpx
+
+BASE_DIR = Path.cwd()
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 
@@ -109,6 +112,119 @@ def get_weather(city: str) -> str:
     return weather_data.get(city, "不明")
 
 
+# ファイル操作ツール
+FILE_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "ファイルの内容を読み取る",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "ファイルパス（相対パス）"}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "ファイルに内容を書き込む（上書き）",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "ファイルパス（相対パス）"},
+                    "content": {"type": "string", "description": "書き込む内容"}
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "ディレクトリ内のファイル一覧を取得",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "ディレクトリパス（相対パス）"}
+                },
+                "required": ["path"]
+            }
+        }
+    }
+]
+
+
+def safe_path(path: str) -> Path | None:
+    """パスを検証し、BASE_DIR内であれば絶対パスを返す。外部なら None"""
+    try:
+        resolved = (BASE_DIR / path).resolve()
+        if BASE_DIR in resolved.parents or resolved == BASE_DIR:
+            return resolved
+        return None
+    except Exception:
+        return None
+
+
+def read_file(path: str) -> str:
+    resolved = safe_path(path)
+    if resolved is None:
+        return "エラー: ディレクトリ外へのアクセスは禁止されています"
+    if not resolved.exists():
+        return f"エラー: ファイルが存在しません: {path}"
+    if not resolved.is_file():
+        return f"エラー: ファイルではありません: {path}"
+    try:
+        return resolved.read_text()
+    except Exception as e:
+        return f"エラー: {e}"
+
+
+def write_file(path: str, content: str) -> str:
+    resolved = safe_path(path)
+    if resolved is None:
+        return "エラー: ディレクトリ外へのアクセスは禁止されています"
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content)
+        return f"書き込み完了: {path}"
+    except Exception as e:
+        return f"エラー: {e}"
+
+
+def list_files(path: str) -> str:
+    resolved = safe_path(path)
+    if resolved is None:
+        return "エラー: ディレクトリ外へのアクセスは禁止されています"
+    if not resolved.exists():
+        return f"エラー: ディレクトリが存在しません: {path}"
+    if not resolved.is_dir():
+        return f"エラー: ディレクトリではありません: {path}"
+    try:
+        files = sorted(resolved.iterdir())
+        return "\n".join(f.name + ("/" if f.is_dir() else "") for f in files)
+    except Exception as e:
+        return f"エラー: {e}"
+
+
+def call_tool(name: str, args: dict) -> str:
+    """ツール呼び出しのディスパッチ"""
+    if name == "get_weather":
+        return get_weather(args["city"])
+    elif name == "read_file":
+        return read_file(args["path"])
+    elif name == "write_file":
+        return write_file(args["path"], args["content"])
+    elif name == "list_files":
+        return list_files(args["path"])
+    return f"不明なツール: {name}"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ollama client")
     parser.add_argument("--model", "-m", help="使用するモデル名")
@@ -143,97 +259,104 @@ def main():
     print(f"\n=== {model_name} でテスト生成 (think={think}, stream={args.stream}) ===")
 
     # generate API
-    if args.stream:
-        print("generate: ", end="", flush=True)
-        for chunk in client.generate_stream(model_name, "こんにちは、自己紹介してください。", think=think):
-            print(chunk.get("response", ""), end="", flush=True)
-        print()
-    else:
-        response = client.generate(model_name, "こんにちは、自己紹介してください。", think=think)
-        print(f"generate: {response}")
+    if False:
+        if args.stream:
+            print("generate: ", end="", flush=True)
+            for chunk in client.generate_stream(model_name, "こんにちは、自己紹介してください。", think=think):
+                print(chunk.get("response", ""), end="", flush=True)
+            print()
+        else:
+            response = client.generate(model_name, "こんにちは、自己紹介してください。", think=think)
+            print(f"generate: {response}")
 
     # chat API
-    print("\n=== chat APIテスト ===")
-    if not args.stream:
-        def chat(messages, content):
-            messages.append({"role": "user", "content": content})
-            print(f"user: {content}")
-            result = client.chat(
-                model_name,
-                messages=messages,
-                think=think,
-            )
-            if "thinking" in result.get("message", {}):
-                print(f"thinking: {result['message']['thinking']}")
-            print(f"assistant: {result['message']['content']}")
-        messages = []
-        chat(messages, "1+1は？")
-        chat(messages, "さらに+4は？")
-    else:
-        def chat(messages, content):
-            messages.append({"role": "user", "content": content})
-            print(f"user: {content}")
-            print("assistant: ", end="", flush=True)
-            content = ""
-            for chunk in client.chat_stream(model_name, messages, think=think):
-                msg = chunk.get("message", {})
-                if msg.get("content"):
-                    print(msg["content"], end="", flush=True)
-                    content += msg["content"]
-            messages.append({"role": "assistant", "content": content})
-            print()
-        messages = []
-        chat(messages, "1+1は？")
-        chat(messages, "さらに+3は？")
+    if False:
+        print("\n=== chat APIテスト ===")
+        if not args.stream:
+            def chat(messages, content):
+                messages.append({"role": "user", "content": content})
+                print(f"user: {content}")
+                result = client.chat(
+                    model_name,
+                    messages=messages,
+                    think=think,
+                )
+                if "thinking" in result.get("message", {}):
+                    print(f"thinking: {result['message']['thinking']}")
+                print(f"assistant: {result['message']['content']}")
+            messages = []
+            chat(messages, "1+1は？")
+            chat(messages, "さらに+4は？")
+        else:
+            def chat(messages, content):
+                messages.append({"role": "user", "content": content})
+                print(f"user: {content}")
+                print("assistant: ", end="", flush=True)
+                content = ""
+                for chunk in client.chat_stream(model_name, messages, think=think):
+                    msg = chunk.get("message", {})
+                    if msg.get("content"):
+                        print(msg["content"], end="", flush=True)
+                        content += msg["content"]
+                messages.append({"role": "assistant", "content": content})
+                print()
+            messages = []
+            chat(messages, "1+1は？")
+            chat(messages, "さらに+3は？")
 
     # tool useデモ
     print("\n=== tool useデモ ===")
-    tools = [WEATHER_TOOL]
-    messages = [{"role": "user", "content": "東京と大阪とニューヨークの天気を教えて"}]
-    print(f"user: {messages[0]['content']}")
+    def chat(messages, content, tools):
+        messages.append({"role": "user", "content": content})
+        print(f"user: {content}")
+        while True:
+            if args.stream:
+                # ストリーミング
+                content = ""
+                tool_calls = []
+                print("assistant: ", end="", flush=True)
+                for chunk in client.chat_stream(model_name, messages, think=think, tools=tools):
+                    msg = chunk.get("message", {})
+                    if msg.get("content"):
+                        print(msg["content"], end="", flush=True)
+                        content += msg["content"]
+                    if msg.get("tool_calls"):
+                        tool_calls.extend(msg["tool_calls"])
+                print()
+                msg = {"role": "assistant", "content": content}
+                if tool_calls:
+                    msg["tool_calls"] = tool_calls
+            else:
+                # 非ストリーミング
+                result = client.chat(model_name, messages, tools=tools, think=think)
+                msg = result["message"]
 
-    while True:
-        if args.stream:
-            # ストリーミング
-            content = ""
-            tool_calls = []
-            print("assistant: ", end="", flush=True)
-            for chunk in client.chat_stream(model_name, messages, think=think, tools=tools):
-                msg = chunk.get("message", {})
-                if msg.get("content"):
-                    print(msg["content"], end="", flush=True)
-                    content += msg["content"]
-                if msg.get("tool_calls"):
-                    tool_calls.extend(msg["tool_calls"])
-            print()
-            msg = {"role": "assistant", "content": content}
-            if tool_calls:
-                msg["tool_calls"] = tool_calls
-        else:
-            # 非ストリーミング
-            result = client.chat(model_name, messages, tools=tools, think=think)
-            msg = result["message"]
+            messages.append(msg)
 
-        messages.append(msg)
-
-        # tool_callsがあれば実行
-        if msg.get("tool_calls"):
-            for tool_call in msg["tool_calls"]:
-                func = tool_call["function"]
-                print(f"[tool call] {func['name']}({func['arguments']})")
-
-                if func["name"] == "get_weather":
-                    tool_result = get_weather(func["arguments"]["city"])
+            # tool_callsがあれば実行
+            if msg.get("tool_calls"):
+                for tool_call in msg["tool_calls"]:
+                    func = tool_call["function"]
+                    print(f"[tool call] {func['name']}({func['arguments']})")
+                    tool_result = call_tool(func["name"], func["arguments"])
                     print(f"[tool result] {tool_result}")
                     messages.append({
                         "role": "tool",
                         "content": tool_result,
                     })
-        else:
-            # tool呼び出しがなければ最終応答
-            if not args.stream:
-                print(f"assistant: {msg['content']}")
-            break
+            else:
+                # tool呼び出しがなければ最終応答
+                if not args.stream:
+                    print(f"assistant: {msg['content']}")
+                break
+
+    messages = []
+    tools = [WEATHER_TOOL] + FILE_TOOLS
+    # chat(messages, "東京と大阪とニューヨークの天気を教えて", tools)
+    chat(messages, "ファイル一覧見せて", tools)
+    chat(messages, "東京の天気をtokyo.txtに書いて", tools)
+    messages = []
+    chat(messages, "tokyo.txtの内容を教えて", tools)
 
 
 if __name__ == "__main__":
