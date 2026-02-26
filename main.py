@@ -47,27 +47,66 @@ class OllamaClient:
         messages: list[dict],
         stream: bool = False,
         think: bool | None = None,
+        tools: list[dict] | None = None,
     ) -> dict:
         """チャット形式（会話履歴対応）"""
         payload = {"model": model, "messages": messages, "stream": stream}
         if think is not None:
             payload["think"] = think
+        if tools is not None:
+            payload["tools"] = tools
         response = self.client.post(f"{self.base_url}/api/chat", json=payload)
         response.raise_for_status()
         return response.json()
 
     def chat_stream(
-        self, model: str, messages: list[dict], think: bool | None = None
+        self,
+        model: str,
+        messages: list[dict],
+        think: bool | None = None,
+        tools: list[dict] | None = None,
     ):
         """チャット形式（ストリーミング）"""
         payload = {"model": model, "messages": messages, "stream": True}
         if think is not None:
             payload["think"] = think
+        if tools is not None:
+            payload["tools"] = tools
         with self.client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
             response.raise_for_status()
             for line in response.iter_lines():
                 if line:
                     yield json.loads(line)
+
+
+# ツール定義
+WEATHER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "指定した都市の天気を取得する",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "都市名（例: 東京、大阪、ニューヨーク）"
+                }
+            },
+            "required": ["city"]
+        }
+    }
+}
+
+
+def get_weather(city: str) -> str:
+    """天気を返すダミー関数"""
+    weather_data = {
+        "東京": "はれ",
+        "大阪": "ぶた",
+        "ニューヨーク": "ブリザード",
+    }
+    return weather_data.get(city, "不明")
 
 
 def main():
@@ -146,6 +185,56 @@ def main():
         messages = []
         chat(messages, "1+1は？")
         chat(messages, "さらに+3は？")
+
+    # tool useデモ
+    print("\n=== tool useデモ ===")
+    tools = [WEATHER_TOOL]
+    messages = [{"role": "user", "content": "東京と大阪とニューヨークの天気を教えて"}]
+    print(f"user: {messages[0]['content']}")
+
+    while True:
+        if args.stream:
+            # ストリーミング
+            content = ""
+            tool_calls = []
+            print("assistant: ", end="", flush=True)
+            for chunk in client.chat_stream(model_name, messages, think=think, tools=tools):
+                msg = chunk.get("message", {})
+                if msg.get("content"):
+                    print(msg["content"], end="", flush=True)
+                    content += msg["content"]
+                if msg.get("tool_calls"):
+                    tool_calls.extend(msg["tool_calls"])
+            print()
+            msg = {"role": "assistant", "content": content}
+            if tool_calls:
+                msg["tool_calls"] = tool_calls
+        else:
+            # 非ストリーミング
+            result = client.chat(model_name, messages, tools=tools, think=think)
+            msg = result["message"]
+
+        messages.append(msg)
+
+        # tool_callsがあれば実行
+        if msg.get("tool_calls"):
+            for tool_call in msg["tool_calls"]:
+                func = tool_call["function"]
+                print(f"[tool call] {func['name']}({func['arguments']})")
+
+                if func["name"] == "get_weather":
+                    tool_result = get_weather(func["arguments"]["city"])
+                    print(f"[tool result] {tool_result}")
+                    messages.append({
+                        "role": "tool",
+                        "content": tool_result,
+                    })
+        else:
+            # tool呼び出しがなければ最終応答
+            if not args.stream:
+                print(f"assistant: {msg['content']}")
+            break
+
 
 if __name__ == "__main__":
     main()
