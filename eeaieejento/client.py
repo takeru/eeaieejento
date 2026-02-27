@@ -8,7 +8,7 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 class OllamaClient:
     def __init__(self, base_url: str = OLLAMA_BASE_URL):
         self.base_url = base_url
-        self.client = httpx.Client(timeout=120.0)
+        self.client = httpx.Client(timeout=httpx.Timeout(10.0, read=600.0))
 
     def list_models(self) -> list[dict]:
         """利用可能なモデル一覧を取得"""

@@ -129,10 +129,54 @@ def run_agent(client: OllamaClient, model: str, *,
                   stream=stream, think=think, options=options)
 
 
+def load_conversation_log(log_path: Path) -> dict:
+    """JONLログから会話状態を復元する"""
+    records = []
+    with open(log_path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+
+    start = next(r for r in records if r["event"] == "start")
+    persona_a = start["persona_a"]
+    persona_b = start["persona_b"]
+
+    turns = [r for r in records if r["event"] == "turn"]
+
+    # 各ペルソナのメッセージ履歴を復元
+    # persona_aの視点: 自分のターン→assistant, 相手のターン→user
+    # persona_bの視点: その逆
+    messages_a: list[dict] = []
+    messages_b: list[dict] = []
+
+    for turn in turns:
+        content = turn["content"]
+        if turn["persona"] == persona_a:
+            messages_a.append({"role": "assistant", "content": content})
+            messages_b.append({"role": "user", "content": content})
+        else:
+            messages_b.append({"role": "assistant", "content": content})
+            messages_a.append({"role": "user", "content": content})
+
+    last_utterance = turns[-1]["content"] if turns else ""
+    start_turn = len(turns)
+
+    return {
+        "persona_a": persona_a,
+        "persona_b": persona_b,
+        "messages_a": messages_a,
+        "messages_b": messages_b,
+        "last_utterance": last_utterance,
+        "start_turn": start_turn,
+    }
+
+
 def run_conversation(client: OllamaClient, model: str, *,
                      persona_a: str, persona_b: str,
                      stream: bool = False, think: bool | None = None,
-                     options: dict | None = None, max_turns: int = 20):
+                     options: dict | None = None, max_turns: int = 20,
+                     resume_from: Path | None = None):
     """2人のペルソナで会話させる"""
     mem_a, ws_a = resolve_persona(persona_a)
     mem_b, ws_b = resolve_persona(persona_b)
@@ -140,6 +184,20 @@ def run_conversation(client: OllamaClient, model: str, *,
     ws_b.mkdir(parents=True, exist_ok=True)
     init_memory(mem_a)
     init_memory(mem_b)
+
+    # ログから復元 or 新規開始
+    if resume_from:
+        state = load_conversation_log(resume_from)
+        messages_a = state["messages_a"]
+        messages_b = state["messages_b"]
+        last_utterance = state["last_utterance"]
+        start_turn = state["start_turn"]
+        print(f"\n=== 会話再開: {persona_a} × {persona_b} (ターン{start_turn}から) ===")
+    else:
+        messages_a = []
+        messages_b = []
+        last_utterance = ""
+        start_turn = 0
 
     # ログファイル準備
     LOGS_DIR.mkdir(exist_ok=True)
@@ -152,18 +210,17 @@ def run_conversation(client: OllamaClient, model: str, *,
         log.flush()
 
     with open(log_path, "w") as log:
-        write_log(log, "start", persona_a=persona_a, persona_b=persona_b, model=model)
-        print(f"\n=== 会話: {persona_a} × {persona_b} ===")
+        write_log(log, "start", persona_a=persona_a, persona_b=persona_b, model=model,
+                  resumed_from=str(resume_from) if resume_from else None)
+        if not resume_from:
+            print(f"\n=== 会話: {persona_a} × {persona_b} ===")
         print(f"ログ: {log_path}\n")
 
         tools = CONVERSATION_TOOLS
-        messages_a: list[dict] = []
-        messages_b: list[dict] = []
-
-        last_utterance = ""
         prev_ended = False
+        end_turn = start_turn + max_turns
 
-        for i in range(max_turns):
+        for i in range(start_turn, end_turn):
             is_a_turn = (i % 2 == 0)
             name = persona_a if is_a_turn else persona_b
             other = persona_b if is_a_turn else persona_a
