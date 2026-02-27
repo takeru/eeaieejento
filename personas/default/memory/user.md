@@ -1,4 +1,1 @@
-# User
-
-ユーザーについての情報はまだありません。
-観察を通じて学んでいきます。
+{"name": "takeru", "github": "https://github.com/takeru/eeaieejento"}

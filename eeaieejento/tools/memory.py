@@ -1,8 +1,7 @@
-from datetime import datetime
 from pathlib import Path
 
 MEMORY_CATEGORIES = ["identity", "user", "knowledge", "journal", "projects"]
-WRITABLE_CATEGORIES = ["user", "knowledge", "journal", "projects"]
+WRITABLE_CATEGORIES = ["identity", "user", "knowledge", "journal", "projects"]
 
 MEMORY_TOOLS = [
     {
@@ -27,14 +26,14 @@ MEMORY_TOOLS = [
         "type": "function",
         "function": {
             "name": "update_memory",
-            "description": "メモリを更新する。user/knowledge/journalに書き込み可能。identityは読み取り専用",
+            "description": "メモリを更新する。identity/user/knowledge/journal/projectsすべてに書き込み可能",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "category": {
                         "type": "string",
                         "enum": WRITABLE_CATEGORIES,
-                        "description": "メモリのカテゴリ（user/knowledge/journal）"
+                        "description": "メモリのカテゴリ"
                     },
                     "content": {
                         "type": "string",
@@ -158,15 +157,12 @@ def init_memory(memory_dir: Path):
 
 def build_system_prompt(memory_dir: Path) -> str:
     """メモリを含むシステムプロンプトを構築"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     identity = read_memory("identity", memory_dir)
     user = read_memory("user", memory_dir)
     knowledge = read_memory("knowledge", memory_dir)
     projects = read_memory("projects", memory_dir)
 
-    return f"""現在時刻: {now}
-
-{identity}
+    return f"""{identity}
 
 ---
 
@@ -189,8 +185,8 @@ def build_system_prompt(memory_dir: Path) -> str:
 
 あなたはメモリツールを使って、学んだことや重要な情報を記憶できます:
 - `read_memory`: メモリを読み取る（identity/user/knowledge/journal/projects）
-- `update_memory`: メモリを更新する（user/knowledge/journal/projects）
-  - identityは読み取り専用（あなたの核となるペルソナ）
+- `update_memory`: メモリを更新する（identity/user/knowledge/journal/projects）
+  - identityも自分で書き換えられる（自分の名前や性格を自分で決められる）
   - journalは追記専用で使うことを推奨
   - projectsで自分の目標を管理する
 
@@ -200,13 +196,10 @@ def build_system_prompt(memory_dir: Path) -> str:
 
 def build_conversation_prompt(memory_dir: Path, *, other_name: str) -> str:
     """会話モード用のシステムプロンプトを構築"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     identity = read_memory("identity", memory_dir)
     knowledge = read_memory("knowledge", memory_dir)
 
-    return f"""現在時刻: {now}
-
-{identity}
+    return f"""{identity}
 
 ---
 
@@ -236,4 +229,44 @@ def build_conversation_prompt(memory_dir: Path, *, other_name: str) -> str:
 - 相手に見せたいものがある → ファイルに書いてから話題にしろ
 
 **毎ターン、少なくとも1つはツールを使うことを強く推奨する。**
+"""
+
+
+def build_chat_prompt(memory_dir: Path) -> str:
+    """人間との対話モード用のシステムプロンプトを構築"""
+    identity = read_memory("identity", memory_dir)
+    knowledge = read_memory("knowledge", memory_dir)
+    user = read_memory("user", memory_dir)
+
+    return f"""{identity}
+
+---
+
+## あなたの知識
+{knowledge}
+
+---
+
+## ユーザーについて
+{user}
+
+---
+
+## 対話モード
+
+あなたは人間のユーザーと会話しています。
+
+### 会話のルール
+- 自分のキャラクターらしく自然に返答する
+- **短く話す。1〜3文程度。長い演説はしない**
+- 相手は人間なので、質問したり感想を聞いたりしてよい
+- **存在しないことを作り話しない。嘘をつかない**
+- 知らないことは「知らない」「わからない」と正直に言う
+
+### ツールを使え
+- 話題に出たことを調べたい → `web_search` で検索しろ
+- URLの中身を読みたい → `web_fetch` で取得しろ
+- ユーザーについて学んだこと → `update_memory` の user カテゴリに記録しろ
+- 覚えておきたいこと → `update_memory` の knowledge や journal に記録しろ
+- 何かを作りたい → `write_file` でワークスペースに書け
 """

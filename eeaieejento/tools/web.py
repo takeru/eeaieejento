@@ -116,7 +116,10 @@ def http_request(method: str, url: str, headers: dict | None = None, body: dict 
                 kwargs["headers"] = headers
             if body and method in ("POST", "PUT", "PATCH"):
                 kwargs["headers"] = {**(headers or {}), "Content-Type": "application/json"}
-                kwargs["content"] = _json.dumps(body, ensure_ascii=False)
+                if isinstance(body, str):
+                    kwargs["content"] = body
+                else:
+                    kwargs["content"] = _json.dumps(body, ensure_ascii=False)
 
             response = client.request(method, url, **kwargs)
 

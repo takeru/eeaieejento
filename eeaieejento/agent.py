@@ -1,11 +1,12 @@
 import json
 import random
+import readline  # noqa: F401 — input()の行編集・履歴を有効化
 from datetime import datetime
 from pathlib import Path
 
 from .client import OllamaClient
 from .tools import ALL_TOOLS, CONVERSATION_TOOLS, call_tool
-from .tools.memory import MEMORY_TOOLS, init_memory, build_system_prompt, build_conversation_prompt
+from .tools.memory import MEMORY_TOOLS, init_memory, build_system_prompt, build_conversation_prompt, build_chat_prompt
 
 PERSONAS_DIR = Path.cwd() / "personas"
 LOGS_DIR = Path.cwd() / "logs"
@@ -114,7 +115,7 @@ def run_agent(client: OllamaClient, model: str, *,
 
     for i in range(max_turns):
         system_prompt = build_system_prompt(memory_dir)
-        messages = [{"role": "system", "content": system_prompt}] + messages[-9:]
+        messages = [{"role": "system", "content": system_prompt}] + [m for m in messages if m["role"] != "system"]
         print(f"\n[ターン {i}]")
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -129,24 +130,68 @@ def run_agent(client: OllamaClient, model: str, *,
                   stream=stream, think=think, options=options)
 
 
-def load_conversation_log(log_path: Path) -> dict:
-    """JONLログから会話状態を復元する"""
+def _load_log_records(log_path: Path) -> list[dict]:
+    """JONLログをレコードのリストとして読み込む"""
     records = []
     with open(log_path) as f:
         for line in f:
             line = line.strip()
             if line:
                 records.append(json.loads(line))
+    return records
 
+
+def _collect_full_history(log_path: Path) -> list[dict]:
+    """resumed_fromチェーンを辿って全ターンレコードを時系列で集める"""
+    records = _load_log_records(log_path)
+    start = next(r for r in records if r["event"] == "start")
+    turn_events = [r for r in records if r["event"] in ("user", "assistant", "turn")]
+
+    parent = start.get("resumed_from")
+    if parent:
+        parent_path = Path(parent)
+        if parent_path.exists():
+            parent_turns = _collect_full_history(parent_path)
+            return parent_turns + turn_events
+
+    return turn_events
+
+
+def _print_history(log_path: Path):
+    """ログの履歴を画面に復元表示する"""
+    events = _collect_full_history(log_path)
+    if not events:
+        return
+    print("--- 以前の会話 ---")
+    for r in events:
+        if r["event"] == "user":
+            print(f"あなた> {r['content']}")
+        elif r["event"] == "assistant":
+            label = r.get("persona", "assistant")
+            print(f"{label}: {r['content']}")
+        elif r["event"] == "turn":
+            print(f"[{r['turn']}] {r['persona']}: {r['content']}")
+    print("--- ここまで ---\n")
+
+
+def load_log(log_path: Path) -> dict:
+    """ログの種別を判定してメタ情報を返す"""
+    records = _load_log_records(log_path)
+    start = next(r for r in records if r["event"] == "start")
+    if "persona_a" in start:
+        return {"type": "conversation", **_load_conversation_log(records)}
+    else:
+        return {"type": "chat", **_load_chat_log(records)}
+
+
+def _load_conversation_log(records: list[dict]) -> dict:
+    """会話ログからメッセージ履歴を復元"""
     start = next(r for r in records if r["event"] == "start")
     persona_a = start["persona_a"]
     persona_b = start["persona_b"]
 
     turns = [r for r in records if r["event"] == "turn"]
 
-    # 各ペルソナのメッセージ履歴を復元
-    # persona_aの視点: 自分のターン→assistant, 相手のターン→user
-    # persona_bの視点: その逆
     messages_a: list[dict] = []
     messages_b: list[dict] = []
 
@@ -160,7 +205,6 @@ def load_conversation_log(log_path: Path) -> dict:
             messages_a.append({"role": "user", "content": content})
 
     last_utterance = turns[-1]["content"] if turns else ""
-    start_turn = len(turns)
 
     return {
         "persona_a": persona_a,
@@ -168,7 +212,25 @@ def load_conversation_log(log_path: Path) -> dict:
         "messages_a": messages_a,
         "messages_b": messages_b,
         "last_utterance": last_utterance,
-        "start_turn": start_turn,
+        "start_turn": len(turns),
+    }
+
+
+def _load_chat_log(records: list[dict]) -> dict:
+    """チャットログからメッセージ履歴を復元"""
+    start = next(r for r in records if r["event"] == "start")
+    persona = start["persona"]
+
+    messages: list[dict] = []
+    for r in records:
+        if r["event"] == "user":
+            messages.append({"role": "user", "content": r["content"]})
+        elif r["event"] == "assistant":
+            messages.append({"role": "assistant", "content": r["content"]})
+
+    return {
+        "persona": persona,
+        "messages": messages,
     }
 
 
@@ -187,12 +249,13 @@ def run_conversation(client: OllamaClient, model: str, *,
 
     # ログから復元 or 新規開始
     if resume_from:
-        state = load_conversation_log(resume_from)
+        state = _load_conversation_log(_load_log_records(resume_from))
         messages_a = state["messages_a"]
         messages_b = state["messages_b"]
         last_utterance = state["last_utterance"]
         start_turn = state["start_turn"]
         print(f"\n=== 会話再開: {persona_a} × {persona_b} (ターン{start_turn}から) ===")
+        _print_history(resume_from)
     else:
         messages_a = []
         messages_b = []
@@ -229,10 +292,10 @@ def run_conversation(client: OllamaClient, model: str, *,
             msgs = messages_a if is_a_turn else messages_b
 
             sys_prompt = build_conversation_prompt(mem, other_name=other)
-            msgs_tail = [m for m in msgs if m["role"] != "system"][-9:]
+            msgs_non_sys = [m for m in msgs if m["role"] != "system"]
             msgs.clear()
             msgs.append({"role": "system", "content": sys_prompt})
-            msgs.extend(msgs_tail)
+            msgs.extend(msgs_non_sys)
 
             if i == 0:
                 user_content = f"（{other}との会話が始まった。まず自分から話しかけよう。）"
@@ -271,10 +334,10 @@ def run_conversation(client: OllamaClient, model: str, *,
             (persona_b, mem_b, ws_b, messages_b),
         ]:
             sys_prompt = build_conversation_prompt(mem, other_name="")
-            msgs_tail = [m for m in msgs if m["role"] != "system"][-9:]
+            msgs_non_sys = [m for m in msgs if m["role"] != "system"]
             msgs.clear()
             msgs.append({"role": "system", "content": sys_prompt})
-            msgs.extend(msgs_tail)
+            msgs.extend(msgs_non_sys)
 
             reflection, reflection_tools = chat_turn(
                 client, model, msgs,
@@ -288,3 +351,79 @@ def run_conversation(client: OllamaClient, model: str, *,
                       content=reflection, tool_calls=reflection_tools)
 
     print(f"\nログ保存: {log_path}")
+
+
+def run_chat(client: OllamaClient, model: str, *,
+             persona: str = "default",
+             stream: bool = True, think: bool | None = None,
+             options: dict | None = None,
+             resume_from: Path | None = None):
+    """人間とペルソナの対話モード"""
+    memory_dir, workspace_dir = resolve_persona(persona)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    init_memory(memory_dir)
+
+    # ログから復元 or 新規開始
+    if resume_from:
+        state = _load_chat_log(_load_log_records(resume_from))
+        messages = state["messages"]
+        turn = len([m for m in messages if m["role"] == "user"])
+        print(f"\n=== {persona} とチャット（再開: ターン{turn}から） ===")
+        _print_history(resume_from)
+    else:
+        messages = []
+        turn = 0
+
+    # ログ準備
+    LOGS_DIR.mkdir(exist_ok=True)
+    now = datetime.now()
+    log_path = LOGS_DIR / f"chat_{persona}_{now.strftime('%Y%m%d_%H%M%S')}.jsonl"
+
+    def write_log(log, event: str, **data):
+        record = {"time": datetime.now().isoformat(), "event": event, **data}
+        log.write(json.dumps(record, ensure_ascii=False) + "\n")
+        log.flush()
+
+    with open(log_path, "w") as log:
+        write_log(log, "start", persona=persona, model=model,
+                  resumed_from=str(resume_from) if resume_from else None)
+        if not resume_from:
+            print(f"\n=== {persona} とチャット ===")
+        print(f"ログ: {log_path}")
+        print("（Ctrl+C で終了）\n")
+
+        tools = ALL_TOOLS
+
+        while True:
+            try:
+                user_input = input("あなた> ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                break
+            if not user_input:
+                continue
+
+            # メモリから最新のシステムプロンプトを再構築
+            sys_prompt = build_chat_prompt(memory_dir)
+            msgs_non_sys = [m for m in messages if m["role"] != "system"]
+            messages.clear()
+            messages.append({"role": "system", "content": sys_prompt})
+            messages.extend(msgs_non_sys)
+
+            write_log(log, "user", turn=turn, content=user_input)
+
+            response, tool_calls = chat_turn(
+                client, model, messages, user_input, tools,
+                memory_dir=memory_dir, workspace_dir=workspace_dir,
+                stream=stream, think=think, options=options,
+                label=persona,
+            )
+
+            write_log(log, "assistant", turn=turn, persona=persona,
+                      content=response, tool_calls=tool_calls)
+            turn += 1
+
+        write_log(log, "end", turns=turn)
+
+    print(f"=== チャット終了 ===")
+    print(f"ログ保存: {log_path}")

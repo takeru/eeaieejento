@@ -3,13 +3,14 @@ import random
 from pathlib import Path
 
 from .client import OllamaClient
-from .agent import run_agent, run_conversation, load_conversation_log, list_personas, create_persona
+from .agent import run_agent, run_chat, run_conversation, load_log, list_personas, create_persona
 
 
 def main():
     parser = argparse.ArgumentParser(description="自律AIエージェント")
     parser.add_argument("--model", "-m", help="使用するモデル名")
     parser.add_argument("--persona", "-p", default="default", help="ペルソナ名（デフォルト: default）")
+    parser.add_argument("--chat", action="store_true", help="ペルソナと対話する")
     parser.add_argument("--talk", nargs="*", metavar="PERSONA", help="2人のペルソナで会話させる（省略でランダム）")
     parser.add_argument("--resume", metavar="LOG_FILE", help="ログファイルから会話を再開")
     parser.add_argument("--list-personas", action="store_true", help="利用可能なペルソナ一覧を表示")
@@ -66,18 +67,28 @@ def main():
 
     print(f"\n=== {model_name} (think={think}, stream={not args.no_stream}) ===")
 
-    if args.resume:
+    if args.chat:
+        run_chat(client, model_name,
+                 persona=args.persona,
+                 stream=not args.no_stream, think=think, options=options)
+    elif args.resume:
         log_file = Path(args.resume)
         if not log_file.exists():
             print(f"ログファイルが見つかりません: {log_file}")
             return
-        state = load_conversation_log(log_file)
-        kwargs = dict(persona_a=state["persona_a"], persona_b=state["persona_b"],
-                      stream=not args.no_stream, think=think, options=options,
-                      resume_from=log_file)
-        if args.max_turns:
-            kwargs["max_turns"] = args.max_turns
-        run_conversation(client, model_name, **kwargs)
+        state = load_log(log_file)
+        if state["type"] == "chat":
+            run_chat(client, model_name,
+                     persona=state["persona"],
+                     stream=not args.no_stream, think=think, options=options,
+                     resume_from=log_file)
+        else:
+            kwargs = dict(persona_a=state["persona_a"], persona_b=state["persona_b"],
+                          stream=not args.no_stream, think=think, options=options,
+                          resume_from=log_file)
+            if args.max_turns:
+                kwargs["max_turns"] = args.max_turns
+            run_conversation(client, model_name, **kwargs)
     elif args.talk is not None:
         talk = args.talk
         if len(talk) == 0:
