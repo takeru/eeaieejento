@@ -1,12 +1,12 @@
 """tool use のデモ（天気ツール + ファイル操作）"""
 
 import argparse
+from pathlib import Path
 
 from eeaieejento.client import OllamaClient
-from eeaieejento.tools import call_tool
 from eeaieejento.tools.weather import WEATHER_TOOL
 from eeaieejento.tools.file_ops import FILE_TOOLS
-from eeaieejento.agent import chat_turn
+from eeaieejento.agent import chat_turn, resolve_persona
 
 
 def main():
@@ -36,18 +36,23 @@ def main():
         options["temperature"] = args.temperature
     options = options or None
 
+    memory_dir, workspace_dir = resolve_persona("default")
+    workspace_dir.mkdir(parents=True, exist_ok=True)
     tools = [WEATHER_TOOL] + FILE_TOOLS
 
     print(f"\n=== tool useデモ ({model}) ===")
 
     messages = []
     chat_turn(client, model, messages, "ファイル一覧見せて", tools,
+              memory_dir=memory_dir, workspace_dir=workspace_dir,
               stream=args.stream, think=think, options=options)
     chat_turn(client, model, messages, "東京の天気をtokyo.txtに書いて", tools,
+              memory_dir=memory_dir, workspace_dir=workspace_dir,
               stream=args.stream, think=think, options=options)
 
     messages = []
     chat_turn(client, model, messages, "tokyo.txtの内容を教えて", tools,
+              memory_dir=memory_dir, workspace_dir=workspace_dir,
               stream=args.stream, think=think, options=options)
 
 

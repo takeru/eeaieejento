@@ -1,9 +1,6 @@
 from datetime import datetime
 from pathlib import Path
 
-BASE_DIR = Path.cwd() / "workspace"
-BASE_DIR.mkdir(exist_ok=True)
-
 FILE_TOOLS = [
     {
         "type": "function",
@@ -141,19 +138,19 @@ FILE_TOOLS = [
 ]
 
 
-def safe_path(path: str) -> Path | None:
-    """パスを検証し、BASE_DIR内であれば絶対パスを返す。外部なら None"""
+def safe_path(path: str, base_dir: Path) -> Path | None:
+    """パスを検証し、base_dir内であれば絶対パスを返す。外部なら None"""
     try:
-        resolved = (BASE_DIR / path).resolve()
-        if BASE_DIR in resolved.parents or resolved == BASE_DIR:
+        resolved = (base_dir / path).resolve()
+        if base_dir in resolved.parents or resolved == base_dir:
             return resolved
         return None
     except Exception:
         return None
 
 
-def read_file(path: str, offset: int | None = None, limit: int | None = None) -> str:
-    resolved = safe_path(path)
+def read_file(path: str, base_dir: Path, offset: int | None = None, limit: int | None = None) -> str:
+    resolved = safe_path(path, base_dir)
     if resolved is None:
         return "エラー: ディレクトリ外へのアクセスは禁止されています"
     if not resolved.exists():
@@ -175,8 +172,8 @@ def read_file(path: str, offset: int | None = None, limit: int | None = None) ->
         return f"エラー: {e}"
 
 
-def write_file(path: str, content: str) -> str:
-    resolved = safe_path(path)
+def write_file(path: str, content: str, base_dir: Path) -> str:
+    resolved = safe_path(path, base_dir)
     if resolved is None:
         return "エラー: ディレクトリ外へのアクセスは禁止されています"
     try:
@@ -187,8 +184,8 @@ def write_file(path: str, content: str) -> str:
         return f"エラー: {e}"
 
 
-def append_file(path: str, content: str) -> str:
-    resolved = safe_path(path)
+def append_file(path: str, content: str, base_dir: Path) -> str:
+    resolved = safe_path(path, base_dir)
     if resolved is None:
         return "エラー: ディレクトリ外へのアクセスは禁止されています"
     try:
@@ -200,8 +197,8 @@ def append_file(path: str, content: str) -> str:
         return f"エラー: {e}"
 
 
-def delete_file(path: str) -> str:
-    resolved = safe_path(path)
+def delete_file(path: str, base_dir: Path) -> str:
+    resolved = safe_path(path, base_dir)
     if resolved is None:
         return "エラー: ディレクトリ外へのアクセスは禁止されています"
     if not resolved.exists():
@@ -218,8 +215,8 @@ def delete_file(path: str) -> str:
         return f"エラー: {e}"
 
 
-def mkdir(path: str) -> str:
-    resolved = safe_path(path)
+def mkdir(path: str, base_dir: Path) -> str:
+    resolved = safe_path(path, base_dir)
     if resolved is None:
         return "エラー: ディレクトリ外へのアクセスは禁止されています"
     try:
@@ -229,8 +226,8 @@ def mkdir(path: str) -> str:
         return f"エラー: {e}"
 
 
-def grep_file(path: str, pattern: str) -> str:
-    resolved = safe_path(path)
+def grep_file(path: str, pattern: str, base_dir: Path) -> str:
+    resolved = safe_path(path, base_dir)
     if resolved is None:
         return "エラー: ディレクトリ外へのアクセスは禁止されています"
     if not resolved.exists():
@@ -250,8 +247,8 @@ def grep_file(path: str, pattern: str) -> str:
         return f"エラー: {e}"
 
 
-def file_info(path: str) -> str:
-    resolved = safe_path(path)
+def file_info(path: str, base_dir: Path) -> str:
+    resolved = safe_path(path, base_dir)
     if resolved is None:
         return "エラー: ディレクトリ外へのアクセスは禁止されています"
     if not resolved.exists():
@@ -269,8 +266,8 @@ def file_info(path: str) -> str:
         return f"エラー: {e}"
 
 
-def list_files(path: str) -> str:
-    resolved = safe_path(path)
+def list_files(path: str, base_dir: Path) -> str:
+    resolved = safe_path(path, base_dir)
     if resolved is None:
         return "エラー: ディレクトリ外へのアクセスは禁止されています"
     if not resolved.exists():
@@ -284,9 +281,9 @@ def list_files(path: str) -> str:
         return f"エラー: {e}"
 
 
-def edit_file(path: str, search: str, replace: str) -> str:
+def edit_file(path: str, search: str, replace: str, base_dir: Path) -> str:
     """ファイルの一部を編集する（Search/Replace形式）"""
-    resolved = safe_path(path)
+    resolved = safe_path(path, base_dir)
     if resolved is None:
         return "エラー: ディレクトリ外へのアクセスは禁止されています"
     if not resolved.exists():

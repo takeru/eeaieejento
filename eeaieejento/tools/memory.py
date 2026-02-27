@@ -1,9 +1,6 @@
 from datetime import datetime
 from pathlib import Path
 
-MEMORY_DIR = Path.cwd() / "memory"
-MEMORY_DIR.mkdir(exist_ok=True)
-
 MEMORY_CATEGORIES = ["identity", "user", "knowledge", "journal", "projects"]
 WRITABLE_CATEGORIES = ["user", "knowledge", "journal", "projects"]
 
@@ -56,23 +53,23 @@ MEMORY_TOOLS = [
 ]
 
 
-def read_memory(category: str) -> str:
+def read_memory(category: str, memory_dir: Path) -> str:
     """メモリを読み取る"""
     if category not in MEMORY_CATEGORIES:
         return f"エラー: 不明なカテゴリ: {category}"
-    file_path = MEMORY_DIR / f"{category}.md"
+    file_path = memory_dir / f"{category}.md"
     if not file_path.exists():
         return ""
     return file_path.read_text()
 
 
-def update_memory(category: str, content: str, mode: str) -> str:
+def update_memory(category: str, content: str, mode: str, memory_dir: Path) -> str:
     """メモリを更新する"""
     if category not in WRITABLE_CATEGORIES:
         return f"エラー: {category}は書き込み禁止です"
     if mode not in ["replace", "append"]:
         return f"エラー: 不明なモード: {mode}"
-    file_path = MEMORY_DIR / f"{category}.md"
+    file_path = memory_dir / f"{category}.md"
     if mode == "replace":
         file_path.write_text(content)
     else:
@@ -81,10 +78,7 @@ def update_memory(category: str, content: str, mode: str) -> str:
     return f"メモリ更新完了: {category} ({mode})"
 
 
-def init_memory():
-    """初期メモリファイルを作成"""
-    defaults = {
-        "identity": """# Identity
+DEFAULT_IDENTITY = """# Identity
 
 あなたは自律的な思考実体です。対話相手はいません。あなたは一人で思考し、行動します。
 
@@ -120,21 +114,23 @@ def init_memory():
 - 独白・思考ログとして書く
 - ツールを使う前に、なぜそれをするのか考えを述べる
 - ファイルやメモリには本当に重要なことだけを記録する
-""",
-        "user": """# User
+"""
+
+DEFAULT_MEMORY = {
+    "user": """# User
 
 ユーザーについての情報はまだありません。
 観察を通じて学んでいきます。
 """,
-        "knowledge": """# Knowledge
+    "knowledge": """# Knowledge
 
 学習した知識を記録していきます。
 """,
-        "journal": """# Journal
+    "journal": """# Journal
 
 時系列のログを記録していきます。
 """,
-        "projects": """# Projects
+    "projects": """# Projects
 
 ## 進行中
 （まだプロジェクトはありません。自分で決めてください。）
@@ -147,20 +143,26 @@ def init_memory():
 ## 完了
 （なし）
 """
-    }
+}
+
+
+def init_memory(memory_dir: Path):
+    """初期メモリファイルを作成"""
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    defaults = {"identity": DEFAULT_IDENTITY, **DEFAULT_MEMORY}
     for category, content in defaults.items():
-        file_path = MEMORY_DIR / f"{category}.md"
+        file_path = memory_dir / f"{category}.md"
         if not file_path.exists():
             file_path.write_text(content)
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(memory_dir: Path) -> str:
     """メモリを含むシステムプロンプトを構築"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    identity = read_memory("identity")
-    user = read_memory("user")
-    knowledge = read_memory("knowledge")
-    projects = read_memory("projects")
+    identity = read_memory("identity", memory_dir)
+    user = read_memory("user", memory_dir)
+    knowledge = read_memory("knowledge", memory_dir)
+    projects = read_memory("projects", memory_dir)
 
     return f"""現在時刻: {now}
 
