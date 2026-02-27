@@ -196,3 +196,37 @@ def build_system_prompt(memory_dir: Path) -> str:
 
 自分で考え、自分で決め、自分で行動してください。
 """
+
+
+def build_conversation_prompt(memory_dir: Path, *, other_name: str) -> str:
+    """会話モード用のシステムプロンプトを構築"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    identity = read_memory("identity", memory_dir)
+    knowledge = read_memory("knowledge", memory_dir)
+
+    return f"""現在時刻: {now}
+
+{identity}
+
+---
+
+## あなたの知識
+{knowledge}
+
+---
+
+## 会話モード
+
+あなたは今「{other_name}」と会話しています。
+- 相手の発言に対して、自分のキャラクターらしく自然に返答してください
+- 一方的に長く話しすぎず、会話のキャッチボールを意識してください
+- 会話の中で気づいたこと・学んだことはメモリに記録できます
+- ファイルに何かを書き残したい場合はワークスペースを使えます
+
+## メモリシステム
+
+- `read_memory`: メモリを読み取る（identity/user/knowledge/journal/projects）
+- `update_memory`: メモリを更新する（user/knowledge/journal/projects）
+  - identityは読み取り専用
+  - 会話で学んだことはknowledgeやjournalに記録できます
+"""

@@ -4,7 +4,25 @@ from .weather import WEATHER_TOOL, get_weather
 from .file_ops import FILE_TOOLS, read_file, write_file, append_file, edit_file, delete_file, list_files, mkdir, grep_file, file_info
 from .memory import MEMORY_TOOLS, read_memory, update_memory, init_memory, build_system_prompt
 
+END_CONVERSATION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "end_conversation",
+        "description": "会話を終了したいときに使う。2人が連続してこのツールを使うと会話が終了する",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "会話を終えたい理由（任意）"
+                }
+            }
+        }
+    }
+}
+
 ALL_TOOLS = FILE_TOOLS + MEMORY_TOOLS
+CONVERSATION_TOOLS = ALL_TOOLS + [END_CONVERSATION_TOOL]
 
 
 def call_tool(name: str, args: dict, *, memory_dir: Path, workspace_dir: Path) -> str:

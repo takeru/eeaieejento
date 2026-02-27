@@ -1,18 +1,21 @@
 import argparse
+import random
 
 from .client import OllamaClient
-from .agent import run_agent, list_personas, create_persona
+from .agent import run_agent, run_conversation, list_personas, create_persona
 
 
 def main():
     parser = argparse.ArgumentParser(description="自律AIエージェント")
     parser.add_argument("--model", "-m", help="使用するモデル名")
     parser.add_argument("--persona", "-p", default="default", help="ペルソナ名（デフォルト: default）")
+    parser.add_argument("--talk", nargs="*", metavar="PERSONA", help="2人のペルソナで会話させる（省略でランダム）")
     parser.add_argument("--list-personas", action="store_true", help="利用可能なペルソナ一覧を表示")
     parser.add_argument("--create-persona", metavar="NAME", help="新しいペルソナを作成")
     parser.add_argument("--think", action="store_true", help="thinkingモードを有効化")
     parser.add_argument("--no-think", action="store_true", help="thinkingモードを無効化")
     parser.add_argument("--stream", action="store_true", help="ストリーミング出力を有効化")
+    parser.add_argument("--max-turns", type=int, help="最大ターン数")
     parser.add_argument("--temperature", "-t", type=float, help="温度（0.0-2.0）")
     args = parser.parse_args()
 
@@ -61,6 +64,33 @@ def main():
 
     print(f"\n=== {model_name} (think={think}, stream={args.stream}) ===")
 
-    run_agent(client, model_name,
-              persona=args.persona,
-              stream=args.stream, think=think, options=options)
+    if args.talk is not None:
+        talk = args.talk
+        if len(talk) == 0:
+            personas = list_personas()
+            if len(personas) < 2:
+                print("ペルソナが2つ以上必要です。--create-persona NAME で作成してください")
+                return
+            talk = random.sample(personas, 2)
+            print(f"ランダム選択: {talk[0]} × {talk[1]}")
+        elif len(talk) == 1:
+            personas = [p for p in list_personas() if p != talk[0]]
+            if not personas:
+                print("他のペルソナがありません。--create-persona NAME で作成してください")
+                return
+            talk.append(random.choice(personas))
+            print(f"ランダム選択: {talk[0]} × {talk[1]}")
+        elif len(talk) > 2:
+            print("--talk に指定できるペルソナは最大2つです")
+            return
+        kwargs = dict(persona_a=talk[0], persona_b=talk[1],
+                      stream=args.stream, think=think, options=options)
+        if args.max_turns:
+            kwargs["max_turns"] = args.max_turns
+        run_conversation(client, model_name, **kwargs)
+    else:
+        kwargs = dict(persona=args.persona,
+                      stream=args.stream, think=think, options=options)
+        if args.max_turns:
+            kwargs["max_turns"] = args.max_turns
+        run_agent(client, model_name, **kwargs)
